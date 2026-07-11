@@ -181,7 +181,7 @@
     </div>
     <button class="btn btn-primary" onclick="doLogin()">เข้าสู่ระบบ</button>
     <div id="loginError"></div>
-    <div class="apiConfigNote">
+    <div class="apiConfigNote" id="apiConfigNote">
       เชื่อมต่อกับ: <span id="apiUrlDisplay">(ยังไม่ได้ตั้งค่า)</span><br>
       <a href="#" onclick="promptApiUrl();return false;" style="color:var(--sky);">ตั้งค่า URL ของระบบ (Apps Script)</a>
     </div>
@@ -226,7 +226,13 @@ const CATEGORIES = {
 const CLASS_LEVELS = ['อ.2','อ.3','ป.1','ป.2','ป.3','ป.4','ป.5','ป.6'];
 const RATINGS = ['ดีเยี่ยม','ดี','พอใช้','ควรพัฒนา'];
 
-let API_URL = localStorage.getItem('portfolio_api_url') || '';
+/* ==================== CONFIG ====================
+ * วาง Web app URL ของ Apps Script ที่ deploy แล้วตรงนี้ (บรรทัดเดียว) ครั้งเดียวจบ
+ * แล้วทุกคนที่เปิดเว็บนี้จะไม่ต้องตั้งค่าอะไรเองอีกเลย
+ * ตัวอย่าง: 'https://script.google.com/macros/s/AKfycb.../exec'
+ */
+const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbwX8OzsO94pZtVEjoVEisHyxNOP2XGYfRwfZ1KEQjzZoPIChwfPtTYOsbG81vO1zqsc/exec';
+let API_URL = localStorage.getItem('portfolio_api_url') || DEFAULT_API_URL;
 let session = null; // {username, role, fullName, linkedStudentIds}
 let state = { years:[], activeYear:null, view:'dashboard', selectedStudentId:null, selectedClass:null };
 
@@ -949,6 +955,7 @@ function escapeHtml(s){ const d=document.createElement('div'); d.textContent = s
 /* ==================== INIT ==================== */
 window.addEventListener('load', () => {
   document.getElementById('apiUrlDisplay').textContent = API_URL || '(ยังไม่ได้ตั้งค่า)';
+  if (DEFAULT_API_URL) { document.getElementById('apiConfigNote').style.display = 'none'; }
   const saved = sessionStorage.getItem('portfolio_session');
   if (saved && API_URL) { session = JSON.parse(saved); enterApp(); }
   document.getElementById('loginPassword').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
