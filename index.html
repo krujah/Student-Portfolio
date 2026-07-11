@@ -107,6 +107,9 @@
   .avatar img{width:100%;height:100%;object-fit:cover;}
 
   form .field{margin-bottom:12px;}
+  .uploadRow{display:flex;gap:8px;}
+  .uploadRow input{flex:1;}
+  .uploadStatus{font-size:12px;color:var(--ink-soft);margin-top:4px;min-height:16px;}
   select, textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:14px;background:#fff;}
   textarea{min-height:70px;resize:vertical;}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
@@ -124,6 +127,7 @@
   .workCard .wTitle{font-weight:600;font-size:15px;}
   .workCard .wMeta{font-size:12px;color:var(--ink-soft);margin-top:2px;}
   .workCard .wDesc{font-size:13.5px;margin-top:8px;color:var(--ink);}
+  .workCard .wThumb{display:block;max-width:220px;max-height:220px;border-radius:10px;margin-top:8px;border:1px solid var(--line);object-fit:cover;}
   .workCard .wLinks a{font-size:12.5px;color:var(--sky);margin-right:10px;text-decoration:none;}
   .workCard .wFeedback{margin-top:8px;background:var(--paper-dim);border-radius:8px;padding:8px 10px;font-size:13px;}
 
@@ -252,6 +256,50 @@ async function sha256(text){
   const enc = new TextEncoder().encode(text);
   const buf = await crypto.subtle.digest('SHA-256', enc);
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+/* ==================== FILE UPLOAD (POST, text/plain to avoid CORS preflight) ==================== */
+const MAX_UPLOAD_MB = 8;
+function fileToBase64(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = () => reject(new Error('อ่านไฟล์ไม่สำเร็จ'));
+    reader.readAsDataURL(file);
+  });
+}
+async function uploadFileToDrive(file){
+  if (!API_URL) throw new Error('ยังไม่ได้ตั้งค่า API URL');
+  if (file.size > MAX_UPLOAD_MB * 1024 * 1024) throw new Error(`ไฟล์ใหญ่เกินไป (สูงสุด ${MAX_UPLOAD_MB}MB)`);
+  const base64 = await fileToBase64(file);
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: 'uploadFile', fileData: base64, fileName: file.name, mimeType: file.type })
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'อัปโหลดไม่สำเร็จ');
+  return data.data.url;
+}
+// wires a hidden <input type=file> to an upload button + fills a target text input with the resulting Drive link
+function bindFileUpload(inputId, buttonId, targetFieldId, statusId){
+  const fileInput = document.getElementById(inputId);
+  const btn = document.getElementById(buttonId);
+  const status = document.getElementById(statusId);
+  btn.onclick = () => fileInput.click();
+  fileInput.onchange = async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    status.textContent = 'กำลังอัปโหลด...';
+    try {
+      const url = await uploadFileToDrive(file);
+      document.getElementById(targetFieldId).value = url;
+      status.textContent = '✅ อัปโหลดแล้ว: ' + file.name;
+    } catch (e) {
+      status.textContent = '❌ ' + e.message;
+    }
+    fileInput.value = '';
+  };
 }
 
 function toast(msg){
@@ -451,11 +499,19 @@ function openAddStudentModal(classLevel, room){
       <div class="field"><label>เลขประจำตัวประชาชน (ถ้ามี)</label><input id="ns_cid"></div>
       <div class="field"><label>วันเกิด</label><input id="ns_bd" type="date"></div>
     </div>
-    <div class="field"><label>ลิงก์รูปนักเรียน (ถ้ามี)</label><input id="ns_photo" placeholder="https://..."></div>
+    <div class="field"><label>รูปนักเรียน (ถ้ามี)</label>
+      <div class="uploadRow">
+        <input id="ns_photo" placeholder="ยังไม่ได้แนบรูป">
+        <button type="button" class="btn btn-sm btn-outline" id="ns_photo_btn">📎 แนบไฟล์</button>
+      </div>
+      <input type="file" id="ns_photo_file" accept="image/*" style="display:none;">
+      <div class="uploadStatus" id="ns_photo_status"></div>
+    </div>
     <div class="modalActions">
       <button class="btn btn-outline" onclick="closeModal()">ยกเลิก</button>
       <button class="btn btn-primary" style="width:auto;" onclick="submitAddStudent('${classLevel}','${room}')">บันทึก</button>
     </div>`);
+  bindFileUpload('ns_photo_file', 'ns_photo_btn', 'ns_photo', 'ns_photo_status');
 }
 async function submitAddStudent(classLevel, room){
   const fullName = document.getElementById('ns_name').value.trim();
@@ -508,8 +564,8 @@ function renderWorkCard(i, canEdit){
       <div style="display:flex;gap:6px;align-items:center;">${ratingPill}</div>
     </div>
     ${i.Description ? `<div class="wDesc">${escapeHtml(i.Description)}</div>` : ''}
+    ${i.ImageURL ? `<a href="${i.ImageURL}" target="_blank"><img src="${i.ImageURL}" class="wThumb" loading="lazy" alt="ผลงาน"></a>` : ''}
     <div class="wLinks" style="margin-top:8px;">
-      ${i.ImageURL?`<a href="${i.ImageURL}" target="_blank">🖼️ ดูรูปภาพ</a>`:''}
       ${i.PdfURL?`<a href="${i.PdfURL}" target="_blank">📄 ดู PDF</a>`:''}
       ${i.VideoURL?`<a href="${i.VideoURL}" target="_blank">🎬 ดูวิดีโอ</a>`:''}
     </div>
@@ -536,13 +592,29 @@ function openAddWorkModal(studentId, classLevel){
       <div class="field"><label>รายวิชา (ถ้ามี)</label><input id="aw_subject"></div>
     </div>
     <div class="field"><label>คำอธิบาย</label><textarea id="aw_desc"></textarea></div>
-    <div class="field"><label>ลิงก์รูปภาพ</label><input id="aw_image" placeholder="https://drive.google.com/..."></div>
-    <div class="field"><label>ลิงก์ PDF</label><input id="aw_pdf" placeholder="https://..."></div>
-    <div class="field"><label>ลิงก์วิดีโอ</label><input id="aw_video" placeholder="https://youtube.com/..."></div>
+    <div class="field"><label>รูปภาพผลงาน</label>
+      <div class="uploadRow">
+        <input id="aw_image" placeholder="ยังไม่ได้แนบรูป">
+        <button type="button" class="btn btn-sm btn-outline" id="aw_image_btn">📎 แนบไฟล์</button>
+      </div>
+      <input type="file" id="aw_image_file" accept="image/*" style="display:none;">
+      <div class="uploadStatus" id="aw_image_status"></div>
+    </div>
+    <div class="field"><label>ไฟล์ PDF</label>
+      <div class="uploadRow">
+        <input id="aw_pdf" placeholder="ยังไม่ได้แนบไฟล์">
+        <button type="button" class="btn btn-sm btn-outline" id="aw_pdf_btn">📎 แนบไฟล์</button>
+      </div>
+      <input type="file" id="aw_pdf_file" accept="application/pdf" style="display:none;">
+      <div class="uploadStatus" id="aw_pdf_status"></div>
+    </div>
+    <div class="field"><label>ลิงก์วิดีโอ (เช่น YouTube — ไฟล์วิดีโอมักใหญ่เกินกว่าจะแนบโดยตรง)</label><input id="aw_video" placeholder="https://youtube.com/..."></div>
     <div class="modalActions">
       <button class="btn btn-outline" onclick="closeModal()">ยกเลิก</button>
       <button class="btn btn-primary" style="width:auto;" onclick="submitAddWork('${studentId}','${classLevel}')">บันทึกผลงาน</button>
     </div>`);
+  bindFileUpload('aw_image_file', 'aw_image_btn', 'aw_image', 'aw_image_status');
+  bindFileUpload('aw_pdf_file', 'aw_pdf_btn', 'aw_pdf', 'aw_pdf_status');
 }
 function selectCategory(btn, cat){
   document.querySelectorAll('#catGrid .catBtn').forEach(b=>b.classList.remove('selected'));
