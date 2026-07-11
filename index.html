@@ -668,8 +668,11 @@ async function renderManageClasses(){
     </div>
     <div class="card">
       <table><thead><tr><th>ชั้น</th><th>ห้อง</th><th>ครูประจำชั้น (username)</th><th></th></tr></thead><tbody>
-      ${classes.map(c=>`<tr><td>${c.ClassLevel}</td><td>${c.Room}</td><td>${c.TeacherUsername||'-'}</td>
-        <td><button class="btn btn-sm btn-outline" style="color:var(--danger);" onclick="deleteClassAssignment('${c.ClassLevel}','${c.Room}')">ลบ</button></td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--ink-soft);">ยังไม่มีห้องเรียนในปีนี้</td></tr>'}
+      ${classes.map(c=>`<tr><td>${c.ClassLevel}</td><td>${c.Room}</td><td>${c.TeacherUsername||'<span style="color:var(--danger);">ยังไม่ได้กำหนด</span>'}</td>
+        <td>
+          <button class="btn btn-sm btn-outline" onclick="openSetTeacherModal('${c.ClassLevel}','${c.Room}','${c.TeacherUsername||''}')">${c.TeacherUsername?'เปลี่ยนครู':'กำหนดครู'}</button>
+          <button class="btn btn-sm btn-outline" style="color:var(--danger);" onclick="deleteClassAssignment('${c.ClassLevel}','${c.Room}')">ลบ</button>
+        </td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--ink-soft);">ยังไม่มีห้องเรียนในปีนี้</td></tr>'}
       </tbody></table>
     </div>`;
 }
@@ -714,24 +717,49 @@ async function deleteClassAssignment(classLevel, room){
   toast(res.message); goView('manageClasses');
 }
 
+async function openSetTeacherModal(classLevel, room, currentTeacher){
+  const usersRes = await callApi('getUsers', { year: state.activeYear });
+  const teachers = (usersRes.data || []).filter(u => u.Role === 'teacher' && u.Active !== false);
+  showModal(`<h3>กำหนดครูประจำชั้น ${classLevel}/${room}</h3>
+    <div class="field"><label>เลือกจากรายชื่อครูที่มีในระบบ</label>
+      <select id="st_select" onchange="document.getElementById('st_username').value=this.value;">
+        <option value="">-- เลือก หรือพิมพ์ username เอง --</option>
+        ${teachers.map(t=>`<option value="${t.Username}" ${t.Username===currentTeacher?'selected':''}>${t.FullName} (${t.Username})${t.AssignedClasses&&t.AssignedClasses.length?' — ตอนนี้: '+t.AssignedClasses.join(', '):''}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field"><label>หรือพิมพ์ Username เอง</label><input id="st_username" value="${currentTeacher||''}" placeholder="username ครู"></div>
+    <div class="modalActions">
+      ${currentTeacher ? `<button class="btn btn-outline" style="color:var(--danger);" onclick="submitSetTeacher('${classLevel}','${room}','')">ล้างครูประจำชั้น</button>` : ''}
+      <button class="btn btn-outline" onclick="closeModal()">ยกเลิก</button>
+      <button class="btn btn-primary" style="width:auto;" onclick="submitSetTeacher('${classLevel}','${room}')">บันทึก</button>
+    </div>`);
+}
+async function submitSetTeacher(classLevel, room, forcedValue){
+  const teacherUsername = forcedValue !== undefined ? forcedValue : document.getElementById('st_username').value.trim();
+  const res = await callApi('setClassTeacher', { year: state.activeYear, classLevel, room, teacherUsername });
+  closeModal(); toast(res.message); goView('manageClasses');
+}
+
 async function renderManageUsers(){
-  const res = await callApi('getUsers', {});
+  const res = await callApi('getUsers', { year: state.activeYear });
   const users = res.data || [];
   const main = document.getElementById('mainView');
   main.innerHTML = `
-    <div class="viewTitle"><div><h2>ผู้ใช้งานระบบ</h2></div>
+    <div class="viewTitle"><div><h2>ผู้ใช้งานระบบ</h2><div class="desc">ห้องเรียนที่รับผิดชอบอ้างอิงปีการศึกษา ${state.activeYear}</div></div>
       <button class="btn btn-gold btn-sm" onclick="openAddUserModal()">+ เพิ่มผู้ใช้</button>
     </div>
     <div class="card">
-      <table><thead><tr><th>Username</th><th>ชื่อ</th><th>บทบาท</th><th>สถานะ</th><th></th></tr></thead><tbody>
+      <table><thead><tr><th>Username</th><th>ชื่อ</th><th>บทบาท</th><th>ห้องที่รับผิดชอบ</th><th>สถานะ</th><th></th></tr></thead><tbody>
       ${users.map(u=>`<tr><td>${u.Username}</td><td>${u.FullName}</td><td>${roleLabel(u.Role)}</td>
+        <td>${u.Role==='teacher' ? ((u.AssignedClasses&&u.AssignedClasses.length) ? u.AssignedClasses.map(c=>`<span class="pill pill-blue" style="margin-right:4px;">${c}</span>`).join('') : '<span class="pill pill-red">ยังไม่มีห้อง</span>') : '-'}</td>
         <td>${u.Active ? '<span class="pill pill-green">ใช้งาน</span>' : '<span class="pill pill-red">ระงับ</span>'}</td>
         <td>
           <button class="btn btn-sm btn-outline" onclick="toggleUser('${u.Username}')">${u.Active?'ระงับ':'เปิดใช้งาน'}</button>
           <button class="btn btn-sm btn-outline" onclick="openResetPwModal('${u.Username}')">ตั้งรหัสผ่านใหม่</button>
         </td></tr>`).join('')}
       </tbody></table>
-    </div>`;
+    </div>
+    ${users.some(u=>u.Role==='teacher') ? `<div class="card" style="font-size:12.5px;color:var(--ink-soft);">💡 การกำหนด/เปลี่ยนห้องที่ครูรับผิดชอบ ทำได้ที่เมนู <b>"ห้องเรียน/ปีการศึกษา"</b></div>` : ''}`;
 }
 function openAddUserModal(){
   showModal(`<h3>เพิ่มผู้ใช้</h3>
